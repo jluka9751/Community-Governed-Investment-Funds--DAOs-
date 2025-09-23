@@ -7,6 +7,7 @@ A decentralized autonomous organization (DAO) smart contract that enables commun
 - **Membership System**: Join the DAO by depositing STX tokens
 - **Proposal Creation**: Members can submit investment proposals with detailed descriptions
 - **Democratic Voting**: Token-weighted voting system for all investment decisions  
+- **🗳️ Delegation System**: Delegate voting power to trusted representatives for enhanced governance
 - **Treasury Management**: Secure fund pooling and automated distribution
 - **Transparent Governance**: All transactions and votes are publicly auditable
 - **Flexible Configuration**: Adjustable voting periods, quorum requirements, and minimum deposits
@@ -39,6 +40,17 @@ Execute an approved proposal after voting period ends. Transfers funds to the sp
 #### `withdraw-membership`
 Exit the DAO and withdraw your proportional share of the treasury.
 
+#### `delegate-votes (delegatee amount)`
+Delegate voting power to a trusted representative:
+- `delegatee`: Principal address to receive delegation
+- `amount`: Voting power amount to delegate
+
+#### `undelegate-votes (amount)`
+Reclaim a specific amount of previously delegated voting power.
+
+#### `revoke-delegation`
+Instantly revoke all delegated voting power.
+
 ### Read-Only Functions
 
 #### `get-member-info (member)`
@@ -52,6 +64,15 @@ Returns current total STX balance in the DAO treasury.
 
 #### `is-proposal-approved (proposal-id)`
 Checks if a proposal has met quorum and majority approval requirements.
+
+#### `get-effective-voting-power (member)`
+Returns the member's effective voting power (own power - delegated out + delegated in).
+
+#### `get-delegatee (member)`
+Returns the principal that the member has delegated to (if any).
+
+#### `get-delegated-amount (member)`
+Returns the amount of voting power the member has delegated out.
 
 ## Usage Examples
 
@@ -77,6 +98,16 @@ Checks if a proposal has met quorum and majority approval requirements.
 ### Executing an Approved Proposal
 ```clarity
 (contract-call? .DAO execute-proposal u1)
+```
+
+### Delegating Voting Power
+```clarity
+(contract-call? .DAO delegate-votes 'ST1TRUSTEDDELEGATE... u50)
+```
+
+### Checking Effective Voting Power
+```clarity
+(contract-call? .DAO get-effective-voting-power tx-sender)
 ```
 
 ## Governance Parameters
@@ -112,6 +143,9 @@ Checks if a proposal has met quorum and majority approval requirements.
 - `u106`: Proposal not approved
 - `u107`: Proposal already executed
 - `u108`: Below minimum deposit requirement
+- `u109`: Delegation would create a loop
+- `u110`: Insufficient delegated power for operation
+- `u111`: Cannot delegate to yourself
 
 ## License
 

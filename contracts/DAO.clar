@@ -8,6 +8,9 @@
 (define-constant err-proposal-not-approved (err u106))
 (define-constant err-proposal-executed (err u107))
 (define-constant err-min-deposit (err u108))
+(define-constant err-delegation-loop (err u109))
+(define-constant err-insufficient-delegation (err u110))
+(define-constant err-self-delegation (err u111))
 
 (define-data-var next-proposal-id uint u1)
 (define-data-var min-member-deposit uint u1000000)
@@ -40,6 +43,12 @@
   vote: bool,
   voting-power: uint
 })
+
+(define-map delegations principal principal)
+
+(define-map delegated-amounts principal uint)
+
+(define-map received-delegations principal uint)
 
 (define-public (join-dao)
   (let (
@@ -102,26 +111,27 @@
   (let (
     (proposal (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
     (member (unwrap! (map-get? members tx-sender) err-not-member))
-    (voting-power (get voting-power member))
+    (effective-power (get-effective-voting-power tx-sender))
     (vote-key {proposal-id: proposal-id, voter: tx-sender})
   )
   (asserts! (<= stacks-block-height (get voting-ends-at proposal)) err-voting-ended)
   (asserts! (is-none (map-get? proposal-votes vote-key)) err-already-voted)
+  (asserts! (> effective-power u0) err-insufficient-funds)
   
   (map-set proposal-votes vote-key {
     vote: vote-for,
-    voting-power: voting-power
+    voting-power: effective-power
   })
   
   (if vote-for
     (map-set proposals proposal-id
       (merge proposal {
-        votes-for: (+ (get votes-for proposal) voting-power),
+        votes-for: (+ (get votes-for proposal) effective-power),
         total-voters: (+ (get total-voters proposal) u1)
       }))
     (map-set proposals proposal-id
       (merge proposal {
-        votes-against: (+ (get votes-against proposal) voting-power),
+        votes-against: (+ (get votes-against proposal) effective-power),
         total-voters: (+ (get total-voters proposal) u1)
       })))
   (ok true)))
@@ -179,6 +189,57 @@
     (var-set quorum-percentage new-quorum)
     (ok true)))
 
+(define-public (delegate-votes (delegatee principal) (amount uint))
+  (let (
+    (member (unwrap! (map-get? members tx-sender) err-not-member))
+    (current-delegated (default-to u0 (map-get? delegated-amounts tx-sender)))
+    (voting-power (get voting-power member))
+    (available-power (- voting-power current-delegated))
+    (current-received (default-to u0 (map-get? received-delegations delegatee)))
+    (delegatee-has-delegation (is-some (map-get? delegations delegatee)))
+  )
+  (asserts! (not (is-eq tx-sender delegatee)) err-self-delegation)
+  (asserts! (<= amount available-power) err-insufficient-delegation)
+  (asserts! (> amount u0) err-insufficient-delegation)
+  (asserts! (is-member delegatee) err-not-member)
+  (asserts! (not delegatee-has-delegation) err-delegation-loop)
+  
+  (map-set delegations tx-sender delegatee)
+  (map-set delegated-amounts tx-sender (+ current-delegated amount))
+  (map-set received-delegations delegatee (+ current-received amount))
+  (ok true)))
+
+(define-public (undelegate-votes (amount uint))
+  (let (
+    (current-delegated (default-to u0 (map-get? delegated-amounts tx-sender)))
+    (delegatee (unwrap! (map-get? delegations tx-sender) err-not-member))
+    (current-received (default-to u0 (map-get? received-delegations delegatee)))
+  )
+  (asserts! (<= amount current-delegated) err-insufficient-delegation)
+  (asserts! (> amount u0) err-insufficient-delegation)
+  
+  (let (
+    (new-delegated (- current-delegated amount))
+    (new-received (- current-received amount))
+  )
+  (if (is-eq new-delegated u0)
+    (map-delete delegations tx-sender)
+    true)
+  (map-set delegated-amounts tx-sender new-delegated)
+  (map-set received-delegations delegatee new-received)
+  (ok true))))
+
+(define-public (revoke-delegation)
+  (let (
+    (current-delegated (default-to u0 (map-get? delegated-amounts tx-sender)))
+    (delegatee (unwrap! (map-get? delegations tx-sender) err-not-member))
+    (current-received (default-to u0 (map-get? received-delegations delegatee)))
+  )
+  (map-delete delegations tx-sender)
+  (map-delete delegated-amounts tx-sender)
+  (map-set received-delegations delegatee (- current-received current-delegated))
+  (ok true)))
+
 (define-read-only (get-member-info (member principal))
   (map-get? members member))
 
@@ -232,7 +293,7 @@
     false))
 
 (define-read-only (get-total-voting-power)
-  u0)
+  (/ (var-get treasury-balance) u1000))
 
 (define-read-only (get-proposal-status (proposal-id uint))
   (match (map-get? proposals proposal-id)
@@ -248,3 +309,24 @@
 
 (define-read-only (calculate-voting-power (deposit uint))
   (/ deposit u1000))
+
+(define-read-only (get-delegatee (member principal))
+  (map-get? delegations member))
+
+(define-read-only (get-delegated-amount (member principal))
+  (default-to u0 (map-get? delegated-amounts member)))
+
+(define-read-only (get-received-delegation-power (delegate principal))
+  (default-to u0 (map-get? received-delegations delegate)))
+
+(define-read-only (get-effective-voting-power (member principal))
+  (match (map-get? members member)
+    member-data
+      (let (
+        (base-power (get voting-power member-data))
+        (delegated-out (default-to u0 (map-get? delegated-amounts member)))
+        (delegated-in (default-to u0 (map-get? received-delegations member)))
+      )
+      (+ (- base-power delegated-out) delegated-in))
+    u0))
+
