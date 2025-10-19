@@ -11,6 +11,7 @@
 (define-constant err-delegation-loop (err u109))
 (define-constant err-insufficient-delegation (err u110))
 (define-constant err-self-delegation (err u111))
+(define-constant err-empty-comment (err u112))
 
 (define-data-var next-proposal-id uint u1)
 (define-data-var min-member-deposit uint u1000000)
@@ -49,6 +50,14 @@
 (define-map delegated-amounts principal uint)
 
 (define-map received-delegations principal uint)
+
+(define-map proposal-comment-counters uint uint)
+
+(define-map proposal-comments {proposal-id: uint, comment-id: uint} {
+  author: principal,
+  message: (string-ascii 280),
+  created-at: uint
+})
 
 (define-public (join-dao)
   (let (
@@ -240,6 +249,23 @@
   (map-set received-delegations delegatee (- current-received current-delegated))
   (ok true)))
 
+(define-public (add-comment (proposal-id uint) (message (string-ascii 280)))
+  (let (
+    (proposal (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
+    (msg-len (len message))
+    (next-id (default-to u1 (map-get? proposal-comment-counters proposal-id)))
+  )
+    (asserts! (> msg-len u0) err-empty-comment)
+    (map-set proposal-comments {proposal-id: proposal-id, comment-id: next-id} {
+      author: tx-sender,
+      message: message,
+      created-at: stacks-block-height
+    })
+    (map-set proposal-comment-counters proposal-id (+ next-id u1))
+    (ok next-id)
+  )
+)
+
 (define-read-only (get-member-info (member principal))
   (map-get? members member))
 
@@ -329,4 +355,14 @@
       )
       (+ (- base-power delegated-out) delegated-in))
     u0))
+
+(define-read-only (get-comment-count (proposal-id uint))
+  (let ((next-id (default-to u0 (map-get? proposal-comment-counters proposal-id))))
+    (if (is-eq next-id u0) u0 (- next-id u1))
+  )
+)
+
+(define-read-only (get-comment (proposal-id uint) (comment-id uint))
+  (map-get? proposal-comments {proposal-id: proposal-id, comment-id: comment-id})
+)
 
